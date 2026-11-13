@@ -1,0 +1,82 @@
+# LDPred2: Generate Adjusted Weights
+
+```{r Restrict to FHS Variants}
+df_beta_fun <- function(pheno) {
+    info_snp <- read_table(paste0(
+        gwas_path, "LDPred_Subsets/", pheno, "_ldpred_subset.txt"), show_col_types = F) %>%
+        inner_join(fhs_hrc_final %>% select(CHR, POS), by = c("chr" = "CHR", "pos" = "POS"))
+}
+
+## For binary phenotypes, need to calculate revised effective sample size if 
+## haven't done so already
+df_beta <- df_beta_fun("EVRSMK_ukb") %>% 
+    rename(n_eff_og = n_eff) %>%
+    mutate(Nca = 218191, Nco = 141560) %>%
+    mutate(n_eff = ceiling(4/(1/Nca + 1/Nco))) %>%
+    relocate(n_eff, .after = minor_AF) %>% select(-c(n_eff_og, Nca, Nco))
+
+df_beta <- df_beta_fun("ADHD")
+```
+
+```{r Generate Correlation Matrix}
+tmp <- tempfile(tmpdir = "AYoung_Gen3_Final/LDPred2_Data/tmp-data")
+for (chrom in 1:22) {
+    cat(chrom, ".. ", sep = "") ## Print current chrom
+    ind.chr <- which(df_beta$chr == chrom) ## indices in 'df_beta'
+    ind.chr2 <- df_beta$`_NUM_ID_`[ind.chr] ## indices in 'map_ldref'
+    ind.chr3 <- match(ind.chr2, which(map_ldref$chr == chrom)) ## indices in 'corr_chr'
+    corr_chr <- readRDS(paste0("AYoung_Gen3_Final/LDPred2_Data/ldref_hm3_plus/LD_with_blocks_chr", chrom, ".rds"))[ind.chr3, ind.chr3]
+    ## "corr" output is combined correlation matrix of all chroms
+    ## Dimensions should match number of SNPs input from df_beta
+    if (chrom == 1) {
+        corr <- as_SFBM(corr_chr, tmp, compact = TRUE)
+    } else {
+        corr$add_columns(corr_chr, nrow(corr))
+    }
+}
+```
+
+```{r Run LDPred2}
+## Estimate heritability for initialization
+ldsc <- with(df_beta, snp_ldsc(ld, ld_size = nrow(map_ldref), 
+                               chi2 = (beta / beta_se)^2, 
+                               sample_size = n_eff, ncores = 8))
+(h2_est <- ldsc[["h2"]])
+
+## LDPred2 iterations
+set.seed(1)
+multi_auto <- snp_ldpred2_auto(corr, df_beta, h2_init = h2_est, vec_p_init = seq_log(1e-4, 0.2, length.out = 30),
+                               allow_jump_sign = FALSE, shrink_corr = 0.95, ncores = 8)
+
+## Final PGS effect sizes: Filter for best chains and average remaining ones
+range <- sapply(multi_auto, function(auto) diff(range(auto$corr_est)))
+keep <- which(range > (0.95 * quantile(range, 0.95)))
+beta_auto <- rowMeans(sapply(multi_auto[keep], function(auto) auto$beta_est))
+```
+
+```{r}
+## Sanity check: Output of first LDPred2 chain
+## Plot h2_est (SNP heritability estimates) and p_est (proportion of causal variants estimates)
+auto <- multi_auto[[1]]
+plot_grid(qplot(y = auto$path_p_est) + theme_bigstatsr() + 
+            geom_hline(yintercept = auto$p_est, col = "blue") + scale_y_log10() + labs(y = "p"),
+          qplot(y = auto$path_h2_est) + theme_bigstatsr() + 
+            geom_hline(yintercept = auto$h2_est, col = "blue") + labs(y = "h2"), ncol = 1, align = "hv")
+```
+
+```{r Export Sum Stats w/ Adj Weights}
+## Append LDPred2 adjusted BETAs to df_beta (should have same number of rows)
+pheno_ldpred2_wgts <- df_beta %>% mutate(beta_ldpred2 = beta_auto) %>%
+    select(chr, pos, A1 = a1, A2 = a0, rsid, MAF = maf, beta_og = beta, 
+           beta_og_se = beta_se, #pval, 
+           beta_ldpred2, n_eff) %>%
+    ## Reformat to match SNPar input
+    rename_with(toupper) %>%
+    unite("CHRPOS", c("CHR", "POS"), sep = ":", remove = F)
+
+## Change output path to match phenotype for current run
+write.table(pheno_ldpred2_wgts, file = paste0(gwas_path, "LDPred_Results/ldpred2_final/", "cpd_liu_wgts.txt"), row.names = F, quote = F)
+
+## Remove all created objects before next run
+## rm(df_beta, tmp, ind.chr, ind.chr2, ind.chr3, corr_chr, corr, ldsc, h2_est, multi_auto, range, keep, beta_auto, auto, pheno_ldpred2_wgts)
+```
