@@ -1,0 +1,145 @@
+# Genetic Ancestry & Self-Reported Race
+
+## Ancestry Classification and PCA (bigsnpr)
+
+<!--- Reference Samples ---------->
+```{r}
+## Download 1000G Reference Data
+pc_dat_path <- c("CHAPTER1/DC_Project2_YoungV5/PC_Data/")
+ref_1000G_fams <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam"))
+ref_1000G_pops <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam2"), header = T, sep = "\t")
+```
+
+<!--- Setup Files and Project --->
+```{r}
+obj.bed_ref <- bed(paste0(pc_dat_path, "1000G_phase3_common_norel.bed"))
+obj.bed_fhs <- bed(paste0(pc_dat_path, "affy37_qc3.bed"))
+
+## Exclude Ambiguous SNPs
+ref.to.fhs_project <- bed_projectPCA(obj.bed_ref, obj.bed_fhs, k = 20, ncores = 6)
+```
+
+<!--- Extract Reference/Target PCs and SuperPopulation Labels -->
+```{r}
+## Three components of ref.to.fhs_project output:
+## PCs of reference sample (1000G); predict() required
+ref_pcs <- predict(ref.to.fhs_project$obj.svd.ref) %>% as.data.frame() %>% bind_cols(ref_1000G_pops)
+## PCs of target (FHS) sample using simple projection
+## fhs_fullsamp_pcs1 <- ref.to.fhs_project$simple_proj %>% as.data.frame()
+## PCs of target (FHS) sample using OADP projection
+fhs_fullsamp_pcs2 <- ref.to.fhs_project$OADP_proj %>% as.data.frame() 
+```
+
+<!--- Perform KNN Test to Determine SuperPopulation of FHS Sample --->
+```{r}
+## OADP Projection
+knn_1000G.p2 <- knn(train = ref_pcs[,1:20], test = fhs_fullsamp_pcs2[,1:20], cl = ref_pcs$SuperPopulation, prob = T, k = 20, l = 20)
+summary(knn_1000G.p2)
+
+## PCs for FHS sample only with added SuperPop classifier
+fhs_fullsamp_pcs3 <- bind_cols(fhs_fullsamp_pcs2, "SuperPopulation" = knn_1000G.p2) %>% rename_with(~paste0("PC", 1:20), paste0("V", 1:20))
+## Combine with pedigree info
+fhs_qc3_fam <- read.table(paste0(pc_dat_path, "affy37_qc3.fam")) %>% 
+  select("SHAREID" = V2, "PEDNO" = V1, "FSHARE" = V3, "MSHARE" = V4, "SEX" = 5)
+
+fhs_pcs3_plus_ped <- fhs_qc3_fam %>% bind_cols(fhs_fullsamp_pcs3) %>% relocate(SuperPopulation, .after = SEX) %>%
+  ## 35 NAs means classified as ambiguous by PCA analysis - Recode to make clear ancestry still tested
+  mutate(SuperPopulation = case_match(SuperPopulation, NA ~ "AMBIG", .default = SuperPopulation))
+
+## Combine Reference (1000G) PCs/Known SuperPop labels with FHS PCs/Predicted SuperPop Labels
+fhs_plus_ref_pcs <- ref_pcs %>% rename_with(~paste0("PC", 1:20), paste0("V", 1:20)) %>%
+  relocate(REFID = sample.ID, SEX = sex, Population, SuperPopulation) %>% select(-PopulationDescription) %>%
+  bind_rows(fhs_pcs3_plus_ped) %>%
+  relocate(SHAREID, PEDNO, FSHARE, MSHARE, .after = REFID)
+```
+
+```{r}
+write.table(fhs_plus_ref_pcs, file = "AYoung_Gen3_FinalV2/FHS_NewPC_Dat/fhs_plus_ref_pcs.txt", row.names = F, quote = F)
+```
+
+```{r}
+race_check_g3 <- read.csv("AYoung_Gen3_FinalV2/FHS_NewPheno_Dat/g3_fin.rc_phenos.csv") %>%
+  select(SHAREID, IDTYPE, RACE.vec_E1, RACE.vec_E2)
+race_check_g2n <- read.csv("AYoung_Gen3_FinalV2/FHS_NewPheno_Dat/g2n_fin.rc_phenos.csv") %>%
+  select(SHAREID, IDTYPE, RACE.vec_E1, RACE.vec_E2)
+race_check_g2 <- read.csv("AYoung_Gen3_FinalV2/FHS_NewPheno_Dat/g2_fin.rc_phenos.csv") %>%
+  select(SHAREID, IDTYPE, RACE.vec_E8)
+
+race_check_all <- race_check_g3 %>%
+  bind_rows(race_check_g2n) %>%
+  bind_rows(race_check_g2) %>% 
+  mutate(RACE.vec_E2 = case_when(RACE.vec_E2 == RACE.vec_E1 ~ NA, .default = RACE.vec_E2)) %>%
+  unite("RACE_COMBO", contains("RACE"), na.rm = T) %>% mutate(RACE_COMBO = na_if(RACE_COMBO, "")) %>%
+  left_join(fhs_plus_ref_pcs %>% select(SHAREID, PEDNO, FSHARE, MSHARE, "SUPOP" = SuperPopulation), by = "SHAREID")
+
+race_check_fam <- race_check_all %>%
+  left_join(race_check_all %>% select("P.SHAREID" = SHAREID, "P.SUPOP" = SUPOP, "P.RACE_COMBO" = RACE_COMBO), by = c("FSHARE" = "P.SHAREID")) %>%
+  left_join(race_check_all %>% select("M.SHAREID" = SHAREID, "M.SUPOP" = SUPOP, "M.RACE_COMBO" = RACE_COMBO), by = c("MSHARE" = "M.SHAREID")) %>%
+  rowwise() %>%
+  ## 144 with own or parents' race something other than white exclusively
+  mutate(RACE_FLAG = sum(!((RACE_COMBO %in% c("WHITE", NA)) & (P.RACE_COMBO %in% c("WHITE", NA)) & (M.RACE_COMBO %in% c("WHITE", NA)))),
+         POP_FLAG = sum(!((SUPOP %in% c("EUR", NA)) & (P.SUPOP %in% c("EUR", NA)) & (M.SUPOP %in% c("EUR", NA))))) %>%
+  ungroup() %>%
+  filter(!is.na(SUPOP)) %>%
+  filter(RACE_FLAG == 1) %>% filter(SUPOP == "EUR") %>% filter(!(RACE_COMBO == "WHITE")) %>%
+  filter(!(is.na(P.RACE_COMBO) & is.na(M.RACE_COMBO))) %>%
+  filter(!((P.RACE_COMBO %in% c("WHITE", NA)) & (M.RACE_COMBO %in% c("WHITE", NA)))) 
+
+print(race_check_fam %>% select(SHAREID, PEDNO, FSHARE, MSHARE))
+
+  filter(SUPOP == "EUR") %>%
+  filter(!(is.na(P.SUPOP) & is.na(P.RACE_COMBO) & is.na(M.SUPOP) & is.na(M.RACE_COMBO))) %>%
+  filter(!(is.na(P.SUPOP) | is.na(M.SUPOP))) %>%
+  ## Remove 5 respondents whose parent reports of hispanic ancestry match those of offspring
+  filter(!(RACE_COMBO == "WHITE"))
+```
+
+## Genetic PCs for Subsequent Analysis
+
+<!--- Use EURO filtered sample (above) -->
+```{bash}
+./plink2 --bfile PC_Data/affy37_qc3 --keep PC_Data/fhs_euro_samp_list.txt --make-bed --out PC_Data/affy37_qc4
+```
+
+```{r}
+## Apply to FHS Data
+fhs_bedfile <- "PC_Data/affy37_qc4.bed"
+fhs_fam <- read.table("PC_Data/affy37_qc4.fam")
+
+## 731 respondents with no relationship ties (beyond set kinship threshold)
+## Use to project remaining sample
+obj.fhsbed <- bed(fhs_bedfile)
+fhs_rel_pairs <- snp_plinkKINGQC("./plink2", fhs_bedfile, make.bed = FALSE, ncores = 6)
+fhs_nonrel <- fhs_fam %>% filter(!(V2 %in% fhs_rel_pairs$IID1 | V2 %in% fhs_rel_pairs$IID2))
+## Create index for non-relative reference
+ind.norel <- match(fhs_nonrel[,"V2"], obj.fhsbed$fam$sample.ID)
+obj.svd <- bed_autoSVD(obj.fhsbed, ind.row = ind.norel, k = 20, ncores = 6)
+proj <- bed_projectSelfPCA(obj.svd, obj.fhsbed, ind.row = rows_along(obj.fhsbed)[-ind.norel], ncores = 6)
+
+## Can't just bind rows from reference/projected set in proj, since need to align with original
+## indices in order to map to sample.ID
+PCs <- matrix(NA, nrow(obj.fhsbed), ncol(obj.svd$u))
+PCs[ind.norel, ] <- predict(proj[["obj.svd.ref"]])
+PCs[-ind.norel, ] <- proj$OADP_proj
+dimnames(PCs)[[2]] <- paste('PC', 1:20, sep='')
+PCs <- PCs %>% as.data.frame() %>% mutate(SHAREID = obj.fhsbed$fam$sample.ID) %>% relocate(SHAREID)
+
+write.table(PCs, "PC_Data/FHS_PCs.txt", quote = F, row.names = F)
+```
+
+```{bash Remove Non-White Sample}
+## 68 removed
+~/plink1.9/plink \
+  --bfile Affy550K_QC_Sets/Affy550K_qc4 \
+  --remove race_drop_list.txt \
+  --make-bed \
+  --out Affy550K_QC_Sets/Affy550K_qc5
+
+## Check updated pedigree
+## Confirmed: "No cryptic relatedness (up to the 1-degree) is found.""
+~/New_Programs/king -b \
+    Affy550K_QC_Sets/Affy550K_qc5.bed \
+    --related \
+    --degree 1 \
+    --prefix KING_Output/Affy550K_qc5
+```
