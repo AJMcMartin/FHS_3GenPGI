@@ -1,0 +1,53 @@
+# Construct PGIs for all Observed/Imputed
+
+- 14 GWAS weights sets
+
+```{bash Test Case: Single GWAS}
+conda activate SNIPar_GP2_py38
+BGEN_PATH=~/sniparV2_analysis/sniparV2_unipar_bgen
+HDF5_PATH=~/sniparV2_analysis/sniparV2_unipar_hdf5
+WGTS_PATH=~/gwas_weights/ldpred2_final/Current_Versions
+PGI_OUT=sniparV2_analysis/sniparV2_unipar_pgs/1pg_set
+## Matched to prefix of desired weights file
+## Also used as prefix of output PGI file
+GWAS_PHENO=bmi_ukb
+
+pgs.py \
+  ${PGI_OUT}/${GWAS_PHENO}_ldpred2 \
+  --bgen ${BGEN_PATH}/chr@_final \
+  --imp ${HDF5_PATH}/final_chr@ \
+  --grandpar \
+  --weights ${WGTS_PATH}/${GWAS_PHENO}_wgts.txt \
+  --chr_range 1-22 \
+  --SNP CHRPOS \
+  --beta_col BETA_LDPRED2 \
+  --A1 A1 \
+  --A2 A2 \
+  --threads 30
+```
+
+```{bash Final: All GWAS}
+## For all GWAS (start index 0, vector length 14): ${GWAS_PHENO_VEC[*]:0:14}
+## Modify vector start/length values for subset of available GWAS
+GWAS_PHENO_VEC=(adhd afb_repo afb_ukb cpd_cur_ukb cpd_liu cpd_prev_ukb dep_howard ea4 bmi_ukb
+                evrsmk_ukb hgt_ukb neb_ukb neb_wom_repo smkfrq_cur_ukb)
+BGEN_PATH=~/sniparV2_analysis/sniparV2_unipar_bgen
+HDF5_PATH=~/sniparV2_analysis/sniparV2_unipar_hdf5
+WGTS_PATH=~/gwas_weights/ldpred2_final/Current_Versions
+PGI_OUT=sniparV2_analysis/sniparV2_unipar_pgs/1pg_set
+
+for GWAS in ${GWAS_PHENO_VEC[*]:7:6}; do \
+pgs.py \
+    ${PGI_OUT}/${GWAS}_ldpred2 \
+    --bgen ${BGEN_PATH}/chr@_final \
+    --imp ${HDF5_PATH}/final_chr@ \
+    --grandpar \
+    --weights ${WGTS_PATH}/${GWAS}_wgts.txt \
+    --chr_range 1-22 \
+    --SNP CHRPOS \
+    --beta_col BETA_LDPRED2 \
+    --A1 A1 \
+    --A2 A2 \
+    --threads 15; \
+done
+```
