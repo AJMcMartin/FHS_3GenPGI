@@ -1,0 +1,54 @@
+# Sibship Pedigrees
+
+```{r}
+qc5 <- read.table("Affy550K_qc5.fam", colClasses = "character")
+qc5_ped <- qc5 %>% 
+    select(PEDNO = V1, IID = V2, FATHER_ID = V3, MOTHER_ID = V4) %>%
+    rowwise() %>%
+    mutate(NUCID = case_when(FATHER_ID == 0 & MOTHER_ID == 0 ~ IID,
+                             FATHER_ID != 0 & MOTHER_ID == 0 ~ FATHER_ID,
+                             FATHER_ID == 0 & MOTHER_ID != 0 ~ MOTHER_ID,
+                             .default = paste0(c(FATHER_ID, MOTHER_ID), collapse = "_"))) %>%
+    ungroup()
+
+pedno_to_nucid <- qc5_ped %>% select(OLD_FID = PEDNO, OLD_IID = IID, NEW_FID = NUCID, NEW_IID = IID)
+snipar_ibd_ped <- qc5_ped %>% select(FID = NUCID, IID, FATHER_ID, MOTHER_ID)
+
+write.table(pedno_to_nucid, file = "pedno_to_nucid.txt", row.names = F, quote = F)
+write.table(snipar_ibd_ped, file = "snipar_ibd_ped.txt", row.names = F, quote = F)
+```
+
+```{bash}
+## All chromosomes
+~/plink1.9/plink \
+  --bfile Affy550K_qc5 \
+  --update-ids pedno_to_nucid.txt \
+  --make-bed \
+  --out Affy550K_qc6_nucid
+ 
+## Split by chromosome
+for chr in {1..22}; do ~/plink1.9/plink \
+  --bfile Affy550K_qc6_nucid \
+  --chr $chr \
+  --make-bed \
+  --out split_sets/Affy550K_qc6_nucid_chr$chr; \
+done
+```
+
+# Sib IBD Segments
+
+```{bash Run ibd.py}
+conda activate SNIPar_GP2_py38
+PLINK_SETS=~/sniparV2_analysis/sniparV2_unipar_plink/Affy550K_QC_Sets/split_sets
+IBD_PED=~/sniparV2_analysis/sniparV2_unipar_plink/Affy550K_QC_Sets/snipar_ibd_ped.txt
+
+chnum=21
+ibd.py \
+  --bed ${PLINK_SETS}/Affy550K_qc6_nucid_chr@ \
+  --chr_range 21 \
+  --pedigree ${IBD_PED} \
+  --map genetic_maps.b37/chr${chnum}.b37.gmap.txt \
+  --min_maf 0.02 \
+  --out sniparV2_analysis/unipar_ibd/ \
+  --threads 10
+```
