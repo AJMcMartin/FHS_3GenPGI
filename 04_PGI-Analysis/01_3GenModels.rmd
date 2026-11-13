@@ -1,0 +1,94 @@
+# Three Generation Models
+
+*Notes*
+
+-   Make sure to set up folders for output prior to running (e.g. `bmi_ukb_pgs`)
+-   Match FIDs in phenotype file to pedigree
+-   All respondents in pheno file must also be in covariate/pc file
+-   For uniparental, should remove `--bpg` flag
+
+```{bash Setup}
+## Destination folder for results with each PGS
+mkdir adhd_pgs afb_repo_pgs afb_ukb_pgs bmi_ukb_pgs cpd_cur_ukb_pgs cpd_liu_pgs cpd_prev_ukb_pgs ea4_pgs
+mkdir hgt_ukb_pgs neb_ukb_pgs neb_wom_repo_pgs smkfrq_cur_ukb_pgs dep_howard_pgs evrsmk_ukb_pgs
+
+## Outcome Pheno File Order
+## FID|IID|HGT|EA|COG|AFB|NEB|CPD.Max|CPD.Cur|CESD|BMI|DBP|SBP|BG.Fast|BG.All|HDL|LDL|NonHDL|FEV1
+```
+
+<!--- Test: Uniparental PGI Regressions for BMI --->
+```{bash Test Case: 1 Pheno/1 PGI}
+conda activate SNIPar_GP2_py38
+
+## Modify directories as needed for uniparental
+REG_OUT=~/sniparV2_analysis/sniparV2_unipar_reg/1pg_set
+OUT_PHENO_TAB=~/sniparV2_analysis/sniparV2_unipar_phenos/fin_phenos2.txt
+OUT_PHENO=BMI
+PGS_PHENO=bmi_ukb
+COVAR_TAB=~/sniparV2_analysis/sniparV2_unipar_phenos/fin_pcs2.txt
+SPARSE_DAT=~/fhs_dat/snipar_phased_output/sparse_pairs
+
+pgs.py \
+  ${REG_OUT}/${PGS_PHENO}_pgs/${OUT_PHENO} \
+  --phenofile ${OUT_PHENO_TAB} \
+  --pgs ~/sniparV2_analysis/sniparV2_unipar_pgs/1pg_set/${PGS_PHENO}_ldpred2.pgs.txt \
+  --covar ${COVAR_TAB} \
+  --gen_models 3 \
+  --phen_index 9 \
+  --scale_pgs \
+  --scale_phen \
+  --sparse_thres 0.125 \
+  --ibdrel_path ${SPARSE_DAT}
+```
+
+<!--- Final: Multi-Pheno/Multi-PGI --->
+```{bash Final: Multi-Pheno/PGI}
+conda activate SNIPar_GP2_py38
+
+#===========================================================#
+#============[ DEFINE MODEL COMPONENTS ]====================#
+#===========================================================#
+## Constant variables in loop
+## Change REG_OUT for gparsum vs. separated models
+REG_OUT=~/sniparV2_analysis/sniparV2_unipar_reg/1pg_set
+OUT_PHENO_TAB=~/sniparV2_analysis/sniparV2_unipar_phenos/fin_phenos2.txt
+COVAR_TAB=~/sniparV2_analysis/sniparV2_unipar_phenos/fin_pcs2.txt
+SPARSE_DAT=~/fhs_dat/snipar_phased_output/sparse_pairs
+
+## Index from 0 to (nvars - 1); length = nvars
+## Complete vector: ${PGS_PHENO_VEC[*]:0:nvars} -> 0:14
+PGS_PHENO_VEC=(adhd afb_repo afb_ukb bmi_ukb cpd_cur_ukb cpd_liu cpd_prev_ukb dep_howard ea4 
+                evrsmk_ukb hgt_ukb neb_ukb neb_wom_repo smkfrq_cur_ukb)
+                
+## Order of phenotypes should match those in phenotype table, with HGT first
+## Complete vector - ${OUT_PHENO_VEC[*]:0:17}
+OUT_PHENO_VEC=(HGT EA COG AFB NEB CPD.Max CPD.Cur CESD BMI DBP SBP BG.Fast BG.All HDL LDL NonHDL FEV1)
+
+#===========================================================#
+#============[ RUN MODELS ]=================================#
+#===========================================================#
+## HGT: Run with PHEN_NUM=1 and --sparse_thres 0.05 and ${OUT_PHENO_VEC[*]:0:1}
+## Other phenos: Run with PHEN_NUM=2 and --sparse_thres 0.05 and ${OUT_PHENO_VEC[*]:1:16}
+## NOTE: If using other subset, should set PHEN_NUM to (1 + min index) in OUT_PHENO_VEC
+GREEN='\033[0;32m' BLUE='\033[0;34m' NOCOLOR='\033[0m'
+for PGS_PHENO in ${PGS_PHENO_VEC[*]:0:14}; do \
+    PHEN_NUM=2; \
+    echo -e "\n${GREEN}Current PGS: ${PGS_PHENO} ${NOCOLOR}"; \
+    for OUT_PHENO in ${OUT_PHENO_VEC[*]:1:16}; do \
+        echo -e "\n${BLUE}---> Phenotype Index ${PHEN_NUM}: ${OUT_PHENO}${NOCOLOR}"; \
+        pgs.py \
+            ${REG_OUT}/${PGS_PHENO}_pgs/${OUT_PHENO} \
+            --phenofile ${OUT_PHENO_TAB} \
+            --pgs ~/sniparV2_analysis/sniparV2_unipar_pgs/1pg_set/${PGS_PHENO}_ldpred2.pgs.txt \
+            --covar ${COVAR_TAB} \
+            --gen_models 1-3 \
+            --phen_index ${PHEN_NUM} \
+            --scale_pgs \
+            --scale_phen \
+            --sparse_thres 0.05 \
+            --ibdrel_path ${SPARSE_DAT} \
+            --threads 30; \
+        ((PHEN_NUM++)); \
+    done; \
+done
+```
