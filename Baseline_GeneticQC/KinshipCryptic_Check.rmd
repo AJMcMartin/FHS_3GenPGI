@@ -1,0 +1,81 @@
+# Kinship/Cryptic Relatedness
+
+<!--- Status: Resolved all first-degree relationship pairs flagged by KING --->
+Interested in two sets of flagged cases:
+    (1) Documented 1st degree relationship (Expected kinship coefficient Phi = 0.25) is higher than inferred relationship (Inftype = 2nd, 3rd or 4th)
+    (2) 1st degree or twin relationship (Dup/MZ, FS, PO) inferred but not documented
+
+```{bash}
+~/New_Programs/king -b \
+    ~/sniparV2_analysis/sniparV2_unipar_plink/Affy550K_qc1.bed \
+    --related \
+    --degree 1 \
+    --prefix ~/sniparV2_analysis/sniparV2_unipar_plink/KING_Output/Affy550K_qc1
+```
+
+```{r Kin/Kin0 Review}
+## 189,259 relationship pairs
+## Error 0.5: 5,659 / Error 1: 6,704
+kin <- read.table("Affy550K_qc1.kin", header = T)
+## 78 relationship pairs of interest
+kin_check <- kin %>% 
+    filter(Error %in% c(0.5, 1)) %>% 
+    filter(InfType %in% c("Dup/MZ", "FS", "PO") | Phi >= 0.25) %>%
+    select(FID, ID1, ID2, Phi, Kinship, InfType, Error)
+write.table(kin_check, file = "kin_check.txt", quote = F, row.names = F)
+
+## 10 undocumented 1st degree relationships between pedigrees
+kin0 <- read.table("Affy550K_qc1.kin0", header = T)
+
+## See corresponding excel file for adjustments
+kin <- read.table("AYoung_Gen3_FinalV3/kin_check.txt", header = T)
+kin0 <- read.table("AYoung_Gen3_FinalV3/Affy550K_qc1.kin0", header = T)
+```
+
+```{r}
+## Drop 1 from ALL sets of ITWINS
+kin_drop_list <- read.csv("AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_drop_list.csv")
+kin_adjust_list <- read.csv("AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_adjust_list.csv")
+## Need to add ALL others with shared PEDNO being updated
+kin_update_peds <- plink_ped_ref %>% 
+    select(FID_OLD = V1, IID = V2) %>%
+    right_join(kin_adjust_list %>% select(FID_OLD, FID_NEW), relationship = "many-to-many") %>%
+    filter(FID_OLD != FID_NEW) %>%
+    mutate(OLD_IID = IID) %>%
+    select(OLD_FID = FID_OLD, OLD_IID, NEW_FID = FID_NEW, NEW_IID = IID)
+
+kin_update_pars <- kin_adjust_list %>% select(FID = FID_OLD, IID, PAT = FSHARE_NEW, MAT = MSHARE_NEW)
+
+write.table(kin_drop_list, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_drop.txt", quote = F, row.names = F)
+write.table(kin_update_pars, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_update_pars.txt", quote = F, row.names = F)
+write.table(kin_update_peds, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_update_peds.txt", quote = F, row.names = F)
+```
+
+```{bash Apply Kin Filters}
+~/plink1.9/plink \
+  --bfile Affy550K_qc1 \
+  --remove Kin_Update/kin_drop.txt \
+  --make-bed \
+  --out Affy550K_qc2
+
+~/plink1.9/plink \
+  --bfile Affy550K_qc2 \
+  --update-parents Kin_Update/kin_update_pars.txt \
+  --make-bed \
+  --out Affy550K_qc3
+
+ ~/plink1.9/plink \
+  --bfile Affy550K_qc3 \
+  --update-ids Kin_Update/kin_update_peds.txt \
+  --make-bed \
+  --out Affy550K_qc4
+```
+
+```{bash}
+## KING check with updated pedigree
+~/New_Programs/king -b \
+    ~/sniparV2_analysis/sniparV2_unipar_plink/Affy550K_QC_Sets/Affy550K_qc4.bed \
+    --related \
+    --degree 1 \
+    --prefix ~/sniparV2_analysis/sniparV2_unipar_plink/KING_Output/Affy550K_qc4
+```
