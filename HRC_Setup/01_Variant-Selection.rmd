@@ -1,0 +1,68 @@
+# FHS HRC Setup
+
+- No available TAGs in vcf.gz files; need to use INFO files to select relevant IDs  and use --include 'ID='
+
+```{r Extract Variant Info}
+info_all <- NULL
+for (i in 1:22) {
+  path <- "snpinfo/"
+  info_file <- read.table(paste0(path, "chr", i, ".info.gz"), header = T)
+  info_sub <- info_file %>% filter(Rsq >= 0.9 | Genotyped == "Genotyped")
+  info_all <- bind_rows(info_all, info_sub)
+}
+
+write.table(info_all, file = "~/fhs_dat/HRC_Rsq0.9_Info.txt", quote = F, row.names = F)
+## gzip -c HRC_Rsq0.9_Info.txt > HRC_Rsq0.9_Info.txt.gz
+```
+
+```{r Filter Variant Info}
+## Extract list of non-duplicate SNPs (unique CHRPOS) with...
+## (1) Rsq > 0.99 (2) MAF > 0.01
+## 7,786,075 variants to start
+fhs_hrc_info <- read.table("HRC_Rsq0.9_Info.txt.gz", header = T,
+                           colClasses = c(rep("character", 3), "NULL", rep("numeric", 3), 
+                                          "character", rep("NULL", 5)))
+fhs_hrc_sub <- fhs_hrc_info %>% 
+    ## Filtered to 2,838,418 variants
+    filter(Rsq > 0.99 & MAF > 0.01) %>%
+    group_by(SNP) %>% mutate(snp_count = n()) %>% ungroup() %>%
+    ## Drop another 132 (66 pairs) of SNPs with matching CHR:POS
+    filter(snp_count == 1) %>% select(-snp_count)
+
+write.table(fhs_hrc_sub, file = "hrc_info_subset.txt", quote = F, row.names = F)
+write.table(select(fhs_hrc_sub, SNP), file = "hrc_snp_select.txt", quote = F, row.names = F, col.names = F)
+```
+
+```{bash Select Variants}
+BASE_PATH1=~/dbgap/FCoh1/PhenoGenotypeFiles/ChildStudyConsentSet_phs000342.Framingham.v17.p10.c1.HMB-IRB-MDS/GenotypeFiles
+HRC_PATH1=phg000835.v1.FHS_SHARE_imputed_HRC1.genotype-imputed-data.c1
+SUFF1=GRU
+
+BASE_PATH2=~/dbgap/FCoh2/PhenoGenotypeFiles/ChildStudyConsentSet_phs000342.Framingham.v17.p10.c2.HMB-IRB-NPU-MDS/GenotypeFiles
+HRC_PATH2=phg000835.v1.FHS_SHARE_imputed_HRC1.genotype-imputed-data.c2
+SUFF2=NPU
+
+## Extract list of sample IDs: 6,834 (C1) and 1,634 (C2) -> 8,468 total (confirmed all unique)
+~/bcftools/bcftools query -l ${BASE_PATH2}/${HRC_PATH2}/chr${ChNum}_${SUFF2}.vcf.gz | wc -l
+~/bcftools/bcftools query -l ${BASE_PATH1}/${HRC_PATH1}/chr${ChNum}_${SUFF1}.vcf.gz > ~/fhs_dat/FHS_HRC_Subs/c1_sample_list.txt
+~/bcftools/bcftools query -l ${BASE_PATH2}/${HRC_PATH2}/chr${ChNum}_${SUFF2}.vcf.gz > ~/fhs_dat/FHS_HRC_Subs/c2_sample_list.txt
+
+## C1 Completed: All
+## C2 Completed: All
+ChNum=22
+~/bcftools/bcftools filter --include 'ID=@hrc_snp_list.txt' ${BASE_PATH2}/${HRC_PATH2}/chr${ChNum}_${SUFF2}.vcf.gz --output-type z --output chr${ChNum}_c2_filtered.vcf.gz
+```
+
+```{bash Merge C1/C2 VCF Sets}
+## Need to index all files first
+for chr in {1..19}; do ~/bcftools/bcftools index -t C1_Sets/chr${chr}_c1_filtered.vcf.gz; done
+for chr in {13..21}; do ~/bcftools/bcftools index -t C2_Sets/chr${chr}_c2_filtered.vcf.gz; done
+
+## Merge loop
+for chr in {3..6}; do ~/bcftools/bcftools merge \
+    --threads 40 \
+    C1_Sets/chr${chr}_c1_filtered.vcf.gz \
+    C2_Sets/chr${chr}_c2_filtered.vcf.gz \
+    -o C1C2_Merge/chr${chr}_hrc_fullsamp.vcf.gz; \
+done
+```
