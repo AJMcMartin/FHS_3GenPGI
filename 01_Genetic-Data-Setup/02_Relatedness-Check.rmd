@@ -27,16 +27,29 @@ write.table(kin_check, file = "kin_check.txt", quote = F, row.names = F)
 ## 10 undocumented 1st degree relationships between pedigrees
 kin0 <- read.table("Affy550K_qc1.kin0", header = T)
 
-## See corresponding excel file for adjustments
+## See corresponding excel file for adjustments (kin_adjustments.xlsx)
 kin <- read.table("AYoung_Gen3_FinalV3/kin_check.txt", header = T)
 kin0 <- read.table("AYoung_Gen3_FinalV3/Affy550K_qc1.kin0", header = T)
 ```
 
 ```{r}
-## Drop 1 from ALL sets of ITWINS
+## Individuals to drop
+## Includes 1 sibling from ALL sets of ITWINS and others selected 
+## following manual review
 kin_drop_list <- read.csv("AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_drop_list.csv")
+
+## "kin_adjust_list.csv" exported from "kin_all_adjust" tab in "kin_adjustments.xlsx"
+## "kin_all_adjust" is just a compilation of the "kin_adjust" and "kin0_adjust" tabs
+## i.e. all within-pedigree (kin) and between-pedigree (kin0) adjustments as determined
+## from manual review
 kin_adjust_list <- read.csv("AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_adjust_list.csv")
-## Need to add ALL others with shared PEDNO being updated
+
+##======>>>> Create filters/ID update files for PLINK ================##
+
+## Use kin_adjust_list to assign new pedigree IDs
+## Note that FID is adjusted for all those with shared PEDNO when a (previously assigned)
+## singleton is added to the pedigree
+## New FID is: PED_{OG Fam PEDNO}_{OG Singleton PEDNO}
 kin_update_peds <- plink_ped_ref %>% 
     select(FID_OLD = V1, IID = V2) %>%
     right_join(kin_adjust_list %>% select(FID_OLD, FID_NEW), relationship = "many-to-many") %>%
@@ -44,8 +57,10 @@ kin_update_peds <- plink_ped_ref %>%
     mutate(OLD_IID = IID) %>%
     select(OLD_FID = FID_OLD, OLD_IID, NEW_FID = FID_NEW, NEW_IID = IID)
 
+## Extract list of parental ID adjustments from kin_adjust_list
 kin_update_pars <- kin_adjust_list %>% select(FID = FID_OLD, IID, PAT = FSHARE_NEW, MAT = MSHARE_NEW)
 
+## Final kinship adjustment files to use with PLINK
 write.table(kin_drop_list, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_drop.txt", quote = F, row.names = F)
 write.table(kin_update_pars, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_update_pars.txt", quote = F, row.names = F)
 write.table(kin_update_peds, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_update_peds.txt", quote = F, row.names = F)
@@ -73,9 +88,13 @@ write.table(kin_update_peds, "AYoung_Gen3_FinalV3/Kinship_Adjustments/kin_update
 
 ```{bash}
 ## KING check with updated pedigree
+## Confirmed: "No cryptic relatedness (up to the 1-degree) is found."
 ~/New_Programs/king -b \
     ~/sniparV2_analysis/sniparV2_unipar_plink/Affy550K_QC_Sets/Affy550K_qc4.bed \
     --related \
     --degree 1 \
     --prefix ~/sniparV2_analysis/sniparV2_unipar_plink/KING_Output/Affy550K_qc4
 ```
+
+
+

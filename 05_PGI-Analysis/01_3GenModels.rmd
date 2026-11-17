@@ -2,7 +2,7 @@
 
 *Notes*
 
--   Make sure to set up folders for output prior to running (e.g. `bmi_ukb_pgs`)
+-   Set up folders for output prior to running (e.g. `bmi_ukb_pgs`)
 -   Match FIDs in phenotype file to pedigree
 -   All respondents in pheno file must also be in covariate/pc file
 -   For uniparental, should remove `--bpg` flag

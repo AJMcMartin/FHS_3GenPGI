@@ -68,7 +68,6 @@ awk 'BEGIN{OFS ="\t"} NR >1 {print $9,$6}' $MAP > pos.B36_to_pos.B37.txt
   --out Affy_GRCh37/Affy550K_GRCh37_raw
 ```
 
-
 ## Baseline QC
 
 ```{bash}
@@ -85,9 +84,3 @@ awk 'BEGIN{OFS ="\t"} NR >1 {print $9,$6}' $MAP > pos.B36_to_pos.B37.txt
   --out Affy550K_qc1
 ```
 
-**Allele Frequency Notes**
-
-- Similar distribution overall for founder sample and full sample
-- 1,579 variants have MAF of 0 in either full or founder sample
-    * 581 in both; 998 in founder only; none in full sample only
-- In cases where A1/A2 alleles are swapped in the founder vs. full sample, MAF is close to 0.5 (1st quartile 0.49) so a swap is not unexpected

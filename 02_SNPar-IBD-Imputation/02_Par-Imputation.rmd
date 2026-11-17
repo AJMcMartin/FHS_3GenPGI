@@ -1,3 +1,6 @@
+# Impute Parental Genotypes
+
+```{bash Run impute.py}
 conda activate SNIPar_GP2_py38
 IBD_PATH=unipar_ibd
 BGEN_PATH=~/fhs_dat/FHS_HRC_Subs/hrc_bgen_final
@@ -11,3 +14,4 @@ impute.py \
   --pedigree ${IMP_PED} \
   --out ${OUT_PATH}/chr@_hrc_gt \
   --threads 30
+```

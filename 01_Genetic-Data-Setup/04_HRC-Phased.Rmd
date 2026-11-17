@@ -1,0 +1,232 @@
+---
+title: 'FHS: Variant Selection Compilation'
+output: pdf_document
+date: "2026-11-15"
+---
+
+# Overview
+
+* Most relevant up-to-date info/files are in `AYoung_Gen3_FinalV4` folder
+* HRC info file: `/Volumes/OWCEnvoyProSX/FHS_HRC/HRC_Rsq0.9_Info.txt.gz`
+* HRC VCF files (one for each chromosome): `/Volumes/OWCEnvoyProSX/FHS_HRC/VCF/chr${ChNum}_hrc_fullsamp.vcf.gz`
+
+* Exports from Michigan Imputation server are labeled as chr1.dose.vcf.gz
+    + These files DO contain info tags, and thus can more easily be filtered/QC'd
+    + E.g., can use `--include` directly with bcftools
+* Default FHS HRC files labeled as `chr1_1{ConsentGroupNum}.vcf.gz`
+    + These do NOT contain info tags, so cannot filter by R2 or MAF directly
+    + Thus, need to use INFO files to curate list of desired SNPs, then filter with bcftools
+
+
+```{bash}
+ChNum=2
+bcftools filter \
+  --include 'INFO/R2>0.99 && INFO/MAF>0.01' chr$ChNum.dose.vcf.gz \
+  --output-type z \
+  --output R2_MAF_Filtered/chr$ChNum.qc.vcf.gz
+  
+ ## TEST 11/16/2026
+#bcftools query -l ~/Dropbox/Github_Scratch/chr20_finalV2.vcf.gz | wc -l #Sample count only
+#bcftools query -l ~/Dropbox/Github_Scratch/chr20_finalV2.vcf.gz > ~/Dropbox/Github_Scratch/test_list.txt
+```
+
+
+# Setup of HRC-Imputed/Phased Genome Data: FHS Version
+
+## VCF Selections & Initial QC
+
+* Note that the `vcf.gz` files themselves do not contain TAGs
+* INFO files are required for selection of relevant IDs (e.g., using --include 'ID=' within `bcftools`)
+
+```{r Compile/Extract Variant Info}
+## Compile INFO files for all chromosomes
+## As baseline, restrict to genotyped variants and imputed variants with Rsq >= 0.9
+## 7,786,075 variants total
+info_all <- NULL
+for (i in 1:22) {
+  path <- "snpinfo/"
+  info_file <- read.table(paste0(path, "chr", i, ".info.gz"), header = T)
+  info_sub <- info_file %>% filter(Rsq >= 0.9 | Genotyped == "Genotyped")
+  info_all <- bind_rows(info_all, info_sub)
+}
+
+write.table(info_all, file = "~/fhs_dat/HRC_Rsq0.9_Info.txt", quote = F, row.names = F)
+## gzip -c HRC_Rsq0.9_Info.txt > HRC_Rsq0.9_Info.txt.gz
+
+## From baseline set, create subset of HQ SNPs:
+## (1) Rsq > 0.99 (2) MAF > 0.01 (3) Non-duplicate (unique CHRPOS) (4) Biallelic
+## Select variables: SNP|REF.0.|ALT.1.|MAF|AvgCall|Rsq|Genotyped
+hrc_info_select <- read.table(
+    "HRC_Rsq0.9_Info.txt.gz", header = T,
+    colClasses = c(rep("character", 3), "NULL", rep("numeric", 3), "character", rep("NULL", 5))) %>%
+    ## Filtered to 2,838,418 variants
+    filter(Rsq > 0.99 & MAF > 0.01) %>%
+    group_by(SNP) %>% mutate(snp_count = n()) %>% ungroup() %>%
+    ## Drop another 132 (66 pairs) of SNPs with matching CHR:POS
+    filter(snp_count == 1) %>% select(-snp_count)
+
+write.table(hrc_info_select, file = "hrc_info_select.txt", quote = F, row.names = F)
+write.table(select(hrc_info_select, SNP), file = "hrc_snp_select.txt", quote = F, row.names = F, col.names = F)
+```
+
+```{bash QC1 VCF Subsets}
+PATH1A=~/dbgap/FCoh1/PhenoGenotypeFiles
+PATH1B=ChildStudyConsentSet_phs000342.Framingham.v17.p10.c1.HMB-IRB-MDS/GenotypeFiles
+HRC_PATH1=phg000835.v1.FHS_SHARE_imputed_HRC1.genotype-imputed-data.c1
+SUFF1=GRU
+
+PATH2A=~/dbgap/FCoh2/PhenoGenotypeFiles
+PATH2B=ChildStudyConsentSet_phs000342.Framingham.v17.p10.c2.HMB-IRB-NPU-MDS/GenotypeFiles
+HRC_PATH2=phg000835.v1.FHS_SHARE_imputed_HRC1.genotype-imputed-data.c2
+SUFF2=NPU
+
+##========= Combined Sample Check =====================================##
+## 6,834 (C1) and 1,634 (C2) -> 8,468 total (confirmed all unique)
+~/bcftools/bcftools query -l ${PATH1A}/${PATH1B}/${HRC_PATH1}/chr1_${SUFF1}.vcf.gz \
+    > ~/fhs_dat/FHS_HRC_Subs/c1_sample_list.txt
+~/bcftools/bcftools query -l ${PATH2A}/${PATH2B}/${HRC_PATH2}/chr1_${SUFF2}.vcf.gz \
+    > ~/fhs_dat/FHS_HRC_Subs/c2_sample_list.txt
+
+##========= Index & QC1 VCF Subsets (C1/C2 Samples Separate) ==========##
+## Modify variable path numbers to match SETNUM
+SETNUM=1
+for ChNum in {1..22}; \
+do \
+    ~/bcftools/bcftools filter \
+    --threads 20 \
+    --include 'ID=@hrc_snp_select.txt.gz' \
+    ${PATH1A}/${PATH1B}/${HRC_PATH1}/chr${ChNum}_${SUFF1}.vcf.gz \
+    --write-index \
+    --output-type z \
+    --output HRC_C${SETNUM}_Sets/chr${ChNum}_c${SETNUM}_qc1.vcf.gz; \
+done
+
+##========= Merge Indexed VCFs Across C1/C2 Samples ===================##
+## Note new CHR:POS dups (e.g. from different allele pairs in C1/C2
+for ChNum in {1..22}; \
+do \
+    ~/bcftools/bcftools merge \
+    --threads 20 \
+    HRC_C1_Sets/chr${ChNum}_c1_qc1.vcf.gz \
+    HRC_C2_Sets/chr${ChNum}_c2_qc1.vcf.gz \
+    -o HRC_C1C2_Merge/chr${ChNum}_c1c2.vcf.gz; \
+done
+
+##========= QC1 SNP List ==============================================##
+for chr in {1..22}; \
+do \
+    echo -e "Current Chrom: ${chr}"; \
+    ~/bcftools/bcftools query -f '%CHROM %POS %ID %REF %ALT\n' \
+    HRC_C1C2_Merge/chr${chr}_c1c2.vcf.gz > temp_list.txt
+    cat temp_list.txt >> hrc_all_vcf_snps.txt;
+done
+
+##========= HWE: All SNPs =============================================##
+## Perform HWE test for additional filtering (unvailable in original info files)
+## Could also use vcftools package
+vcf_path=HRC_C1C2_Merge
+for chr in {1..22}; \
+do \
+    echo -e "Current Chrom: ${chr}"; \
+    ~/plink2 --vcf ${vcf_path}/chr${chr}_c1c2.vcf.gz dosage=DS \
+    --silent \
+    --hardy --out chr_all_hwe_test
+    cat chr_all_hwe_test.hardy | awk 'BEGIN{FS=OFS=" "} NR>1{print $1, $2, $10}' >> hrc_c1c2_hwe.txt; \
+done
+```
+
+```{r}
+##========= Create final INFO table and SNP list ======================##
+vcf <- read.table("hrc_all_vcf_snps.txt", header = F)
+hwe <- read.table("hrc_c1c2_hwe.txt", header = F)
+info <- read.table("hrc_info_select.txt.gz", header = T)
+
+## Remove duplicate/triallelic SNPs that resulted from sample merge
+## Add HWE values to INFO file
+vcf2 <- vcf %>% group_by(V3) %>% mutate(N_SNPS = n()) %>% ungroup() %>% 
+    filter(N_SNPS == 1) %>% select(-N_SNPS)
+hwe2 <- hwe %>% filter(V2 %in% vcf2$V3)
+info2 <- info %>% filter(SNP %in% vcf2$V3)
+
+## Apply HWE filter
+hrc_info_final <- info2 %>% left_join(hwe2 %>% select(SNP = V2, HWE_P = V3), by = "SNP") %>%
+    filter(HWE_P > 0.000001)
+
+## Final SNP list
+write.table(select(hrc_info_final, SNP), file = "hrc_final_snps.txt",
+            quote = F, row.names = F, col.names = F)
+
+## Final INFO table for reference
+write.table(hrc_info_final, file = "hrc_info_final.txt", quote = F, row.names = F)
+```
+
+```{bash}
+##========= Final VCF Selection ===================================##
+## Restrict to high quality variants and samples passing previous tests
+## for ancestry, relatedness, and genotyping quality
+for ChNum in {1..22}; do ~/bcftools/bcftools view \
+    --samples-file HRC_C1C2_Final/final_samp_include.txt \
+    --include 'ID=@hrc_final_snps.txt.gz' HRC_C1C2_Merge/chr${ChNum}_c1c2.vcf.gz \
+    --output-type z --output HRC_C1C2_Final/chr${ChNum}_finalV2.vcf.gz; \
+done
+```
+
+
+## Convert VCF to BGEN Format
+
+```{bash VCF to BGEN}
+## Completed: All
+ChNum=6
+qctool -g chr${ChNum}_hrc_fullsamp.vcf.gz -og BGEN/chr${ChNum}_hrc.bgen
+```
+
+```{bash BGEN Mod Examples}
+BASE_PATH=/Volumes/OWCEnvoyProSX/FHS_HRC/BGEN_FINAL
+## Use hardcalls (GT, default), dosages (DS), or probability per possible genotype (GP)
+chnum=20; geno_call=GT
+qctool -g ${BASE_PATH}/qc_vcf_final/chr${chnum}_finQC2.vcf.gz \
+    -vcf-genotype-field ${geno_call} \
+    -og ${BASE_PATH}/qc_bgen/chr${chnum}_hrc_finQC.bgen
+
+## Exclude specified variants and include specified samples in single pass
+qctool -g ${bgen_final}/chr${ChNum}_final.bgen \
+    -og ${bgen_new_path}/chr${ChNum}_new.bgen \
+    -excl-positions ${bgen_new_path}/rsq_99_exclude.txt \
+    -incl-samples ${bgen_new_path}/qc7_bgen_samp.txt
+```
+
+
+# Alternative: Michigan Imputation Server
+
+* HRC reference panel and Eagle v2.4 for phasing
+
+```{bash}
+## Convert binary files to vcf, then bgzip each chromosome file
+for ChNum in {1..22}; do plink1.9 \
+  --bfile Affy550K_GRCh37_raw \
+  --chr ${ChNum} \
+  --recode vcf-iid \
+  --real-ref-alleles \ 
+  --out Mich_Imp/Affy37_Chr${ChNum}_Mich \
+  bgzip Mich_Imp/Affy37_Chr${ChNum}_Mich.vcf; \
+done
+```
+
+```{bash}
+## Unlike the available HRC VCF files in FHS, those from the server
+## contain select variant info and can be filtered directly
+
+## Example 1
+for ChNum in {1..22}; do bcftools filter \
+  --include 'INFO/R2>0.99 && INFO/MAF>0.01' chr${ChNum}.dose.vcf.gz \
+  --output-type z \
+  --output R2_MAF_Filtered/chr${ChNum}.qc.vcf.gz; \
+done
+
+## Example 2
+ChNum=21
+bcftools filter --include 'ID=@filter3_list.txt' Results/chr_${ChNum}/chr${ChNum}.dose.vcf.gz --output-type u |\
+bcftools annotate --set-id '%CHROM:%POS' --output-type z --output Results_Filtered/chr${ChNum}_filter3ID.vcf.gz
+```
+
+

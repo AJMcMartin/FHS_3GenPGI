@@ -1,0 +1,184 @@
+# Genetic Ancestry Classification
+
+* Use `bigsnpr` and `bigutilsr` packages
+
+## Set Up Reference and Target Samples
+
+* Reference: 1000G (loaded below)
+* Target: Previously QC-filtered FHS data (`affy37_qc3`)
+
+```{r}
+## Download 1000G Reference Data: download_1000G("PC_Data")
+pc_dat_path <- c("CHAPTER1/DC_Project2_YoungV5/PC_Data/")
+ref_1000G_fams <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam"))
+ref_1000G_pops <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam2"), header = T, sep = "\t")
+```
+
+## Project FHS Sample onto 1000G
+
+* `bed_projectPCA` outputs a list of three elements:
+    (1) `big_SVD` object which can be used within predict() function to generate PCs of ref sample
+    (2) PCs of target sample using simple projection
+    (3) PCs of target sample using OADP projection (option used here)
+* Note that ambiguous alleles are automatically removed when setting `strand_flip = T` (the default) 
+
+```{r}
+obj.bed_ref <- bed(paste0(pc_dat_path, "1000G_phase3_common_norel.bed"))
+obj.bed_fhs <- bed(paste0(pc_dat_path, "affy37_qc3.bed"))
+ref.to.fhs_project <- bed_projectPCA(obj.bed_ref, obj.bed_fhs, strand_flip = T, k = 20, ncores = 6)
+```
+
+## Extract Ref/Target Sample PCs and Superpop Labels
+
+```{r}
+## (1) PCs of ref sample (1000G) using predict()
+ref_pcs <- predict(ref.to.fhs_project$obj.svd.ref) %>% as.data.frame() %>% bind_cols(ref_1000G_pops)
+
+## (2) PCs of target (FHS) sample using simple projection (not using)
+## fhs_fullsamp_pcs1 <- ref.to.fhs_project$simple_proj %>% as.data.frame()
+
+## (3) PCs of target (FHS) sample using OADP projection
+fhs_fullsamp_pcs2 <- ref.to.fhs_project$OADP_proj %>% as.data.frame() 
+
+## KNN Test/OADP Projection to Determine SuperPop of FHS sample
+knn_1000G.p2 <- knn(train = ref_pcs[,1:20], test = fhs_fullsamp_pcs2[,1:20], cl = ref_pcs$SuperPopulation, prob = T, k = 20, l = 20)
+summary(knn_1000G.p2)
+
+## PCs for FHS sample only with added Superpop classifier
+fhs_fullsamp_pcs3 <- bind_cols(fhs_fullsamp_pcs2, "SuperPopulation" = knn_1000G.p2) %>% 
+    rename_with(~paste0("PC", 1:20), paste0("V", 1:20))
+
+## Combine with pedigree info
+fhs_qc3_fam <- read.table(paste0(pc_dat_path, "affy37_qc3.fam")) %>% 
+  select("SHAREID" = V2, "PEDNO" = V1, "FSHARE" = V3, "MSHARE" = V4, "SEX" = 5)
+
+fhs_pcs3_plus_ped <- fhs_qc3_fam %>% bind_cols(fhs_fullsamp_pcs3) %>% relocate(SuperPopulation, .after = SEX) %>%
+  ## 35 NAs means classified as ambiguous by PCA analysis - Recode to make clear ancestry still tested
+  mutate(SuperPopulation = case_match(SuperPopulation, NA ~ "AMBIG", .default = SuperPopulation))
+
+## Combine Reference (1000G) PCs/Known SuperPop labels with FHS PCs/Predicted SuperPop Labels
+fhs_plus_ref_pcs <- ref_pcs %>% rename_with(~paste0("PC", 1:20), paste0("V", 1:20)) %>%
+  relocate(REFID = sample.ID, SEX = sex, Population, SuperPopulation) %>% select(-PopulationDescription) %>%
+  bind_rows(fhs_pcs3_plus_ped) %>%
+  relocate(SHAREID, PEDNO, FSHARE, MSHARE, .after = REFID)
+
+## Save compiled components
+write.table(fhs_plus_ref_pcs, file = "fhs_plus_ref_pcs.txt", row.names = F, quote = F)
+```
+
+
+## Cross-Check Ancestry with Self-Identified Race
+
+* Examine congruence of ancestry classifications (SuperPopulation) and self-reported racial identities among each respondent and his or her immediate family members (father, mother, full siblings)
+* Extend pedigree to include...
+    1. Indicators for availability of maternal/paternal genetic data
+    2. Maternal/paternal ancestry classifications
+    3. Maternal/paternal self-reported racial identities
+    4. IIDs for all grandparents (PGF, PGM, MGF, MGM)
+    5. Indicators for availability of grandparental genetic data
+    6. Counts of non-white SuperPopulation cases and non-white racial identity cases within each nuclear family
+
+
+```{r}
+## Ancestry classifications as determined above
+gen_ancestry <- read.table("AYoung_Gen3_Final/fhs_fam_ancestry.txt", header = T) %>%
+    mutate(V2 = as.character(V2)) %>%
+    mutate(SuperPop = case_when(is.na(SuperPopulation) ~ "UNCLASS", 
+                                .default = SuperPopulation))
+
+## Combine racial identity self-reports (from core phenotype files) for all relevant cohorts
+pheno_path <- "AYoung_Gen3_Final/FHS_Pheno_Dat/"
+self_race_all <- bind_rows(
+    read.csv(paste0(pheno_path, "g3_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1, RACE_E2),
+    read.csv(paste0(pheno_path, "g2n_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1, RACE_E2),
+    read.csv(paste0(pheno_path, "g2_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1 = RACE)) %>%
+    mutate(IID = as.character(IID))
+
+plink_qc4 <- read.table("AYoung_Gen3_FinalV3/Affy550K_qc4.fam", header = F) %>%
+    select(PEDNO = V1, IID = V2, SEX = V5, FSHARE = V3, MSHARE = V4) %>%
+    mutate(IID = as.character(IID),
+           F_GENO = case_when(FSHARE %in% IID ~ 1, .default = 0),
+           M_GENO = case_when(MSHARE %in% IID ~ 1, .default = 0))
+
+## Saved as ext_race_pedigree.txt
+plink_qc4_pt2 <- plink_qc4 %>%
+    ## Merge parent info; MSHARE/FSHARE of parents become grandparent IDs of focal SHAREID
+    left_join(plink_qc4 %>% select(IID, PGF = FSHARE, PGF_GENO = F_GENO, 
+                                   PGM = MSHARE, PGM_GENO = M_GENO), by = c("FSHARE" = "IID")) %>%
+    left_join(plink_qc4 %>% select(IID, MGF = FSHARE, MGF_GENO = F_GENO,
+                                   MGM = MSHARE, MGM_GENO = M_GENO), by = c("MSHARE" = "IID")) %>%
+    left_join(gen_ancestry %>% select(V2, SuperPop), by = c("IID" = "V2")) %>%
+    left_join(gen_ancestry %>% select(V2, P.SuperPop = SuperPop), by = c("FSHARE" = "V2")) %>%
+    left_join(gen_ancestry %>% select(V2, M.SuperPop = SuperPop), by = c("MSHARE" = "V2")) %>%
+    left_join(self_race_all) %>%
+    left_join(self_race_all %>% rename(P.RACE_E1 = RACE_E1, P.RACE_E2 = RACE_E2), by = c("FSHARE" = "IID")) %>%
+    left_join(self_race_all %>% rename(M.RACE_E1 = RACE_E1, M.RACE_E2 = RACE_E2), by = c("MSHARE" = "IID")) %>%
+    group_by(FSHARE, MSHARE) %>% 
+    mutate(NonWhite_Gen = sum(c(SuperPop != "EUR", P.SuperPop != "EUR", M.SuperPop != "EUR"), na.rm = T),
+           NonWhite_Self = sum(c(RACE_E1 != "WHITE", RACE_E2 != "WHITE",
+                                 P.RACE_E1 != "WHITE", P.RACE_E2 != "WHITE",
+                                 M.RACE_E1 != "WHITE", M.RACE_E2 != "WHITE"), na.rm = T)) %>%
+    mutate(across(c(NonWhite_Gen, NonWhite_Self), ~case_when(FSHARE == 0 | MSHARE == 0 ~ 0,
+                                                             .default = .))) %>%
+    ungroup()
+
+## Saved as race_pedigree.txt
+## race_drop_list.txt is derived from this subset
+race_filter <- plink_qc4_pt2 %>% filter(
+    NonWhite_Gen > 0 | NonWhite_Self > 0 | SuperPop != "EUR" | RACE_E1 != "WHITE" | RACE_E2 != "WHITE")
+write.table(race_filter, file = "AYoung_Gen3_FinalV3/race_pedigree.txt", sep = "\t", quote = F, row.names = F)
+```
+
+## Apply Ancestry Filter
+
+* Restrict sample to unambiguous white European
+
+```{bash Remove Non-White Sample}
+## 68 removed
+~/plink1.9/plink \
+  --bfile Affy550K_QC_Sets/Affy550K_qc4 \
+  --remove race_drop_list.txt \
+  --make-bed \
+  --out Affy550K_QC_Sets/Affy550K_qc5
+
+## Check updated pedigree
+## Confirmed: "No cryptic relatedness (up to the 1-degree) is found.""
+~/New_Programs/king -b \
+    Affy550K_QC_Sets/Affy550K_qc5.bed \
+    --related \
+    --degree 1 \
+    --prefix KING_Output/Affy550K_qc5
+```
+
+
+# Extract Genetic PCs for PGI Analysis
+
+```{r}
+## Apply to FHS Data
+fhs_bedfile <- "PC_Data/Affy550K_qc5.bed"
+fhs_fam <- read.table("PC_Data/Affy550K_qc5.fam")
+
+## 731 respondents with no relationship ties (beyond set kinship threshold)
+## Use to project remaining sample
+obj.fhsbed <- bed(fhs_bedfile)
+fhs_rel_pairs <- snp_plinkKINGQC("./plink2", fhs_bedfile, make.bed = FALSE, ncores = 6)
+fhs_nonrel <- fhs_fam %>% filter(!(V2 %in% fhs_rel_pairs$IID1 | V2 %in% fhs_rel_pairs$IID2))
+
+## Create index for non-relative reference
+ind.norel <- match(fhs_nonrel[,"V2"], obj.fhsbed$fam$sample.ID)
+obj.svd <- bed_autoSVD(obj.fhsbed, ind.row = ind.norel, k = 20, ncores = 6)
+proj <- bed_projectSelfPCA(obj.svd, obj.fhsbed, ind.row = rows_along(obj.fhsbed)[-ind.norel], ncores = 6)
+
+## Can't just bind rows from reference/projected set in proj;
+## need to align with original indices in order to map to sample.ID
+PCs <- matrix(NA, nrow(obj.fhsbed), ncol(obj.svd$u))
+PCs[ind.norel, ] <- predict(proj[["obj.svd.ref"]])
+PCs[-ind.norel, ] <- proj$OADP_proj
+dimnames(PCs)[[2]] <- paste('PC', 1:20, sep='')
+PCs <- PCs %>% as.data.frame() %>% mutate(SHAREID = obj.fhsbed$fam$sample.ID) %>% relocate(SHAREID)
+
+write.table(PCs, "PC_Data/FHS_PCs.txt", quote = F, row.names = F)
+```
+
+
+
