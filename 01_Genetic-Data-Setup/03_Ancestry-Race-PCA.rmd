@@ -1,6 +1,6 @@
 # Genetic Ancestry Classification
 
-* Use `bigsnpr` and `bigutilsr` packages
+Although fairly homogeneous and of predominantly European ancestry, the FHS population contains a non-trivial degree admixture. To detect outliers, I projected samples onto the top 20 PCs derived from 1000 Genomes data using the `bigsnpr` and `bigutilsr` packages, and selected samples whose 20 nearest neighbors in the 20 dimensional PC space were all part of the 1000 Genomes EUR superpopulation. I removed 49 respondents who did not meet these criteria, most of whom were classified as part of the Admixed Americans (AMR) superpopulation. As further verification, for remaining respondents I cross-checked genetic ancestry classification with self-reported race/ethnicity (when available). After restricting to European ancestry, I then used `KING` to extract a subset of unrelated respondents and `bigsnpr` to project 20 PCs derived from this subset to the remaining FHS sample. 
 
 ## Set Up Reference and Target Samples
 
@@ -9,7 +9,7 @@
 
 ```{r}
 ## Download 1000G Reference Data: download_1000G("PC_Data")
-pc_dat_path <- c("CHAPTER1/DC_Project2_YoungV5/PC_Data/")
+pc_dat_path <- c("PC_Data/")
 ref_1000G_fams <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam"))
 ref_1000G_pops <- read.table(paste0(pc_dat_path, "1000G_phase3_common_norel.fam2"), header = T, sep = "\t")
 ```
@@ -66,7 +66,6 @@ fhs_plus_ref_pcs <- ref_pcs %>% rename_with(~paste0("PC", 1:20), paste0("V", 1:2
 write.table(fhs_plus_ref_pcs, file = "fhs_plus_ref_pcs.txt", row.names = F, quote = F)
 ```
 
-
 ## Cross-Check Ancestry with Self-Identified Race
 
 * Examine congruence of ancestry classifications (SuperPopulation) and self-reported racial identities among each respondent and his or her immediate family members (father, mother, full siblings)
@@ -81,20 +80,20 @@ write.table(fhs_plus_ref_pcs, file = "fhs_plus_ref_pcs.txt", row.names = F, quot
 
 ```{r}
 ## Ancestry classifications as determined above
-gen_ancestry <- read.table("AYoung_Gen3_Final/fhs_fam_ancestry.txt", header = T) %>%
+gen_ancestry <- read.table("fhs_fam_ancestry.txt", header = T) %>%
     mutate(V2 = as.character(V2)) %>%
     mutate(SuperPop = case_when(is.na(SuperPopulation) ~ "UNCLASS", 
                                 .default = SuperPopulation))
 
 ## Combine racial identity self-reports (from core phenotype files) for all relevant cohorts
-pheno_path <- "AYoung_Gen3_Final/FHS_Pheno_Dat/"
+pheno_path <- "FHS_Pheno_Dat/"
 self_race_all <- bind_rows(
     read.csv(paste0(pheno_path, "g3_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1, RACE_E2),
     read.csv(paste0(pheno_path, "g2n_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1, RACE_E2),
     read.csv(paste0(pheno_path, "g2_phenos_unstd.csv")) %>% select(IID = SHAREID, RACE_E1 = RACE)) %>%
     mutate(IID = as.character(IID))
 
-plink_qc4 <- read.table("AYoung_Gen3_FinalV3/Affy550K_qc4.fam", header = F) %>%
+plink_qc4 <- read.table("Affy550K_qc4.fam", header = F) %>%
     select(PEDNO = V1, IID = V2, SEX = V5, FSHARE = V3, MSHARE = V4) %>%
     mutate(IID = as.character(IID),
            F_GENO = case_when(FSHARE %in% IID ~ 1, .default = 0),
@@ -126,28 +125,25 @@ plink_qc4_pt2 <- plink_qc4 %>%
 ## race_drop_list.txt is derived from this subset
 race_filter <- plink_qc4_pt2 %>% filter(
     NonWhite_Gen > 0 | NonWhite_Self > 0 | SuperPop != "EUR" | RACE_E1 != "WHITE" | RACE_E2 != "WHITE")
-write.table(race_filter, file = "AYoung_Gen3_FinalV3/race_pedigree.txt", sep = "\t", quote = F, row.names = F)
+write.table(race_filter, file = "race_pedigree.txt", sep = "\t", quote = F, row.names = F)
 ```
 
 ## Apply Ancestry Filter
 
-* Restrict sample to unambiguous white European
-
 ```{bash Remove Non-White Sample}
 ## 68 removed
-~/plink1.9/plink \
+plink1.9 \
   --bfile Affy550K_QC_Sets/Affy550K_qc4 \
   --remove race_drop_list.txt \
   --make-bed \
   --out Affy550K_QC_Sets/Affy550K_qc5
 
-## Check updated pedigree
-## Confirmed: "No cryptic relatedness (up to the 1-degree) is found.""
-~/New_Programs/king -b \
-    Affy550K_QC_Sets/Affy550K_qc5.bed \
-    --related \
-    --degree 1 \
-    --prefix KING_Output/Affy550K_qc5
+## KING Confirmation: "No cryptic relatedness (up to the 1-degree) is found.""
+king -b \
+  Affy550K_QC_Sets/Affy550K_qc5.bed \
+  --related \
+  --degree 1 \
+  --prefix KING_Output/Affy550K_qc5
 ```
 
 
@@ -169,8 +165,7 @@ ind.norel <- match(fhs_nonrel[,"V2"], obj.fhsbed$fam$sample.ID)
 obj.svd <- bed_autoSVD(obj.fhsbed, ind.row = ind.norel, k = 20, ncores = 6)
 proj <- bed_projectSelfPCA(obj.svd, obj.fhsbed, ind.row = rows_along(obj.fhsbed)[-ind.norel], ncores = 6)
 
-## Can't just bind rows from reference/projected set in proj;
-## need to align with original indices in order to map to sample.ID
+## Can't just bind rows from ref/proj set in proj; need to align with original indices in order to map to sample.ID
 PCs <- matrix(NA, nrow(obj.fhsbed), ncol(obj.svd$u))
 PCs[ind.norel, ] <- predict(proj[["obj.svd.ref"]])
 PCs[-ind.norel, ] <- proj$OADP_proj

@@ -1,17 +1,15 @@
 # Affy550K Setup
 
+The core genome-wide data in FHS is provided as part of the SNP Health Association Resource (SHARe) substudy. Genotyping was performed using the Affymetrix500K mapping array (FHS accession: `phg000004.v9`) and the supplemental "HuGeneFocused" Affymetrix50K array (FHS accession: `phg000006.v9`). These arrays are somewhat outdated; the `PLINK` binary files released with the study version used here (`phs000007.v31.p11`) are mapped to the NCBI36 human genome assembly with variants assigned to SSIDs rather than RSIDs. A variety of options, such as the `Ensembl` Crossmap tool, enable liftover to more recent assemblies. The FHS sample is divided into two consent groups, FCoh1 ($n = 6,954$) and FCoh2 ($n = 2,270$). Merging across array sets and subject consent groups provides the raw Affy550K/full sample `PLINK` sets. 
+
+
+
 ## Merge Arrays/Samples
 
-- Affymetrix HuGeneFocused 50K array for consent group 1 (n = 6,954) and consent group 2 (n = 2,270)
-    * dbSNP ID: 52071
-    * FHS accession: phg000004.v9
-- Affymetrix Mapping 500K array for consent group 1 (n = 6,954) and consent group 2 (n = 2,270)
-    * dbSNP IDs: 33766/33767
-    * FHS accession: phg000006.v9
-
 ```{bash}
-## Merge plink file sets across the four array/consent group combos:
-/home/opr/ajm5/plink1.9/plink \
+## Merge plink file sets across the four array/consent group pairs:
+## affy500k_c1, affy500k_c2, affy50k_c1, and affy50k_c2
+plink1.9 \
   --bfile affy500K_c1 \
   --merge-list affy_names.txt \
   --make-bed \
@@ -39,28 +37,28 @@ awk 'BEGIN{OFS ="\t"} NR >1 {print $9,$6}' $MAP > pos.B36_to_pos.B37.txt
 
 ```{bash}
 ## Extract SSIDs
-~/plink1.9/plink \
+plink1.9 \
   --bfile Affy_Orig/affy550K_raw \
   --extract NCBI36_to_GRCh37_Files/ssid.B36_extract.txt \
   --make-bed \
   --out Affy_Orig/Affy550K_ssid.B36_extract
 
 ## Convert SSIDs to B36 RSIDs
-~/plink1.9/plink \
+plink1.9 \
   --bfile Affy_Orig/Affy550K_ssid.B36_extract \
   --update-name NCBI36_to_GRCh37_Files/ssid.B36_to_rsid.B36.txt \
   --make-bed \
   --out Affy_Orig/Affy550K_rsid.B36
   
 ## Convert B36 RSIDs to B37 RSIDs
-~/plink1.9/plink \
+plink1.9 \
   --bfile Affy_Orig/Affy550K_rsid.B36 \
   --update-name NCBI36_to_GRCh37_Files/rsid.B36_to_rsid.B37.txt \
   --make-bed \
   --out Affy_GRCh37/Affy550K_rsid.B37
 
 ## Update B37 chromosome and position values
-~/plink1.9/plink \
+plink1.9 \
   --bfile Affy_GRCh37/Affy550K_rsid.B37 \
   --update-chr NCBI36_to_GRCh37_Files/chr.B36_to_chr.B37.txt \
   --update-map NCBI36_to_GRCh37_Files/pos.B36_to_pos.B37.txt \

@@ -1,37 +1,9 @@
 ---
 title: 'FHS: Variant Selection Compilation'
 output: pdf_document
-date: "2026-11-15"
 ---
 
-# Overview
-
-* Most relevant up-to-date info/files are in `AYoung_Gen3_FinalV4` folder
-* HRC info file: `/Volumes/OWCEnvoyProSX/FHS_HRC/HRC_Rsq0.9_Info.txt.gz`
-* HRC VCF files (one for each chromosome): `/Volumes/OWCEnvoyProSX/FHS_HRC/VCF/chr${ChNum}_hrc_fullsamp.vcf.gz`
-
-* Exports from Michigan Imputation server are labeled as chr1.dose.vcf.gz
-    + These files DO contain info tags, and thus can more easily be filtered/QC'd
-    + E.g., can use `--include` directly with bcftools
-* Default FHS HRC files labeled as `chr1_1{ConsentGroupNum}.vcf.gz`
-    + These do NOT contain info tags, so cannot filter by R2 or MAF directly
-    + Thus, need to use INFO files to curate list of desired SNPs, then filter with bcftools
-
-
-```{bash}
-ChNum=2
-bcftools filter \
-  --include 'INFO/R2>0.99 && INFO/MAF>0.01' chr$ChNum.dose.vcf.gz \
-  --output-type z \
-  --output R2_MAF_Filtered/chr$ChNum.qc.vcf.gz
-  
- ## TEST 11/16/2026
-#bcftools query -l ~/Dropbox/Github_Scratch/chr20_finalV2.vcf.gz | wc -l #Sample count only
-#bcftools query -l ~/Dropbox/Github_Scratch/chr20_finalV2.vcf.gz > ~/Dropbox/Github_Scratch/test_list.txt
-```
-
-
-# Setup of HRC-Imputed/Phased Genome Data: FHS Version
+# Setup of HRC-Imputed/Phased Genome Data
 
 ## VCF Selections & Initial QC
 
@@ -181,7 +153,7 @@ qctool -g chr${ChNum}_hrc_fullsamp.vcf.gz -og BGEN/chr${ChNum}_hrc.bgen
 ```
 
 ```{bash BGEN Mod Examples}
-BASE_PATH=/Volumes/OWCEnvoyProSX/FHS_HRC/BGEN_FINAL
+BASE_PATH=/FHS_HRC/BGEN_FINAL
 ## Use hardcalls (GT, default), dosages (DS), or probability per possible genotype (GP)
 chnum=20; geno_call=GT
 qctool -g ${BASE_PATH}/qc_vcf_final/chr${chnum}_finQC2.vcf.gz \

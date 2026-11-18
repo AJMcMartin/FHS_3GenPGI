@@ -19,13 +19,13 @@ df_beta <- df_beta_fun("ADHD")
 ```
 
 ```{r Generate Correlation Matrix}
-tmp <- tempfile(tmpdir = "AYoung_Gen3_Final/LDPred2_Data/tmp-data")
+tmp <- tempfile(tmpdir = "LDPred2_Data/tmp-data")
 for (chrom in 1:22) {
     cat(chrom, ".. ", sep = "") ## Print current chrom
     ind.chr <- which(df_beta$chr == chrom) ## indices in 'df_beta'
     ind.chr2 <- df_beta$`_NUM_ID_`[ind.chr] ## indices in 'map_ldref'
     ind.chr3 <- match(ind.chr2, which(map_ldref$chr == chrom)) ## indices in 'corr_chr'
-    corr_chr <- readRDS(paste0("AYoung_Gen3_Final/LDPred2_Data/ldref_hm3_plus/LD_with_blocks_chr", chrom, ".rds"))[ind.chr3, ind.chr3]
+    corr_chr <- readRDS(paste0("LDPred2_Data/ldref_hm3_plus/LD_with_blocks_chr", chrom, ".rds"))[ind.chr3, ind.chr3]
     ## "corr" output is combined correlation matrix of all chroms
     ## Dimensions should match number of SNPs input from df_beta
     if (chrom == 1) {
